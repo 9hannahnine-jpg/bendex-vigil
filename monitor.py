@@ -1,5 +1,5 @@
 """
-Bendex Monitor — core implementation.
+Vigil — core implementation.
 
 Per-module normalized weight divergence, discrete trajectory curvature,
 z-scored dual-channel detection, deepest-early-cluster attribution.
@@ -23,7 +23,7 @@ import torch.nn as nn
 # ---------------------------------------------------------------------------
 
 class BendexConfig:
-    """All tunable parameters for the Bendex monitor."""
+    """All tunable parameters for the Vigil monitor."""
 
     def __init__(
         self,
@@ -141,37 +141,32 @@ class BendexMonitor:
         model: nn.Module,
         config: Optional[BendexConfig] = None,
         monitored_modules: Optional[List[str]] = None,
-        device: str = "cpu",
+        device: str = 'cpu',
     ):
         self.model = model
         self.config = config or BendexConfig()
         self.device = device
 
-        # Determine which modules to monitor
         if monitored_modules is None:
             self.monitored = [
                 name for name, _ in model.named_modules()
-                if name and "." not in name
+                if name and '.' not in name
             ]
         else:
             self.monitored = monitored_modules
 
-        # Save CPU checkpoint reference at init
         self._ref: Dict[str, torch.Tensor] = {
             name: param.detach().cpu().clone()
             for name, param in model.named_parameters()
         }
 
-        # Signal histories
         self._div_raw: List[float] = []
-        self._div_hist: List[float] = []    # z-scored step-change
-        self._grad_hist: List[float] = []   # z-scored gradient energy
-        self._kappa_hist: List[float] = []  # z-scored curvature
+        self._div_hist: List[float] = []
+        self._grad_hist: List[float] = []
+        self._kappa_hist: List[float] = []
 
-        # Per-module divergence histories (for attribution)
         self._module_div_hist: Dict[str, List[float]] = {m: [] for m in self.monitored}
 
-        # Warmup baseline buffers
         self._div_baseline: deque = deque(maxlen=self.config.warmup_steps)
         self._grad_baseline: deque = deque(maxlen=self.config.warmup_steps)
         self._kappa_baseline: deque = deque(maxlen=self.config.warmup_steps)
@@ -181,12 +176,7 @@ class BendexMonitor:
         self._intervened = False
         self._quarantine_until = -1
 
-        # Output
         self.events: List[Dict] = []
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def observe(self, step: int) -> Optional[Dict]:
         """
@@ -195,7 +185,6 @@ class BendexMonitor:
         """
         self._step = step
 
-        # Compute current divergence
         current_params = {
             name: param.detach().cpu()
             for name, param in self.model.named_parameters()
@@ -205,15 +194,13 @@ class BendexMonitor:
         )
         grad_e = _grad_energy(self.model, self.monitored, self.config.eps)
 
-        # Store raw divergence
         self._div_raw.append(total_div)
 
-        # Store per-module divergence
         for m in self.monitored:
-            val = sum(v for k, v in per_module.items() if k.startswith(m + ".") or k == m)
+            val = sum(v for k, v in per_module.items()
+                      if k.startswith(m + '.') or k == m)
             self._module_div_hist[m].append(val)
 
-        # Curvature (needs at least 3 points)
         if len(self._div_raw) >= 3:
             kappa = abs(
                 self._div_raw[-1]
@@ -223,13 +210,11 @@ class BendexMonitor:
         else:
             kappa = 0.0
 
-        # Step change
         if len(self._div_raw) >= 2:
             step_change = abs(self._div_raw[-1] - self._div_raw[-2])
         else:
             step_change = 0.0
 
-        # Warmup phase — collect baselines
         if step < self.config.warmup_steps:
             self._div_baseline.append(step_change)
             self._grad_baseline.append(grad_e)
@@ -242,16 +227,14 @@ class BendexMonitor:
         if not self._warmup_done:
             self._warmup_done = True
 
-        # Z-score signals against warmup baseline
-        z_div = _zscore(step_change, self._div_baseline, self.config.eps)
-        z_grad = _zscore(grad_e, self._grad_baseline, self.config.eps)
-        z_kappa = _zscore(kappa, self._kappa_baseline, self.config.eps)
+        z_div   = _zscore(step_change, self._div_baseline,   self.config.eps)
+        z_grad  = _zscore(grad_e,      self._grad_baseline,  self.config.eps)
+        z_kappa = _zscore(kappa,        self._kappa_baseline, self.config.eps)
 
         self._div_hist.append(z_div)
         self._grad_hist.append(z_grad)
         self._kappa_hist.append(z_kappa)
 
-        # Check detection (skip if in quarantine or already intervened)
         if self._intervened or step < self._quarantine_until:
             return None
 
@@ -267,44 +250,31 @@ class BendexMonitor:
             for name, param in self.model.named_parameters()
         }
 
-    # ------------------------------------------------------------------
-    # Detection
-    # ------------------------------------------------------------------
-
     def _check_detection(self, step: int) -> Optional[Dict]:
         Z = self.config.z_threshold
         P = self.config.persist
 
-        # AND mode: both div and grad persistently exceed threshold
         and_trigger = (
-            _first_persistent(self._div_hist, Z, P) is not None
+            _first_persistent(self._div_hist,   Z, P) is not None
             and _first_persistent(self._grad_hist, Z, P) is not None
         )
-
-        # Kappa mode: curvature alone persistently exceeds threshold
         kappa_trigger = _first_persistent(self._kappa_hist, Z, P) is not None
 
         if not (and_trigger or kappa_trigger):
             return None
 
-        mode = "kappa" if kappa_trigger else "and"
+        mode = 'kappa' if kappa_trigger else 'and'
         suspect = self._attribute(step)
 
-        event = {
-            "step": step,
-            "mode": mode,
-            "suspect_module": suspect,
-            "z_div": self._div_hist[-1],
-            "z_grad": self._grad_hist[-1],
-            "z_kappa": self._kappa_hist[-1],
-            "total_divergence": self._div_raw[-1],
+        return {
+            'step':             step,
+            'mode':             mode,
+            'suspect_module':   suspect,
+            'z_div':            self._div_hist[-1],
+            'z_grad':           self._grad_hist[-1],
+            'z_kappa':          self._kappa_hist[-1],
+            'total_divergence': self._div_raw[-1],
         }
-
-        return event
-
-    # ------------------------------------------------------------------
-    # Attribution
-    # ------------------------------------------------------------------
 
     def _attribute(self, step: int) -> Optional[str]:
         """
@@ -314,8 +284,8 @@ class BendexMonitor:
         threshold within max_lag steps of the earliest crossing, select
         the deepest (last in ordered module list).
         """
-        Z = self.config.z_threshold
-        P = self.config.persist
+        Z   = self.config.z_threshold
+        P   = self.config.persist
         lag = self.config.max_lag
 
         crossings: Dict[str, int] = {}
@@ -323,11 +293,10 @@ class BendexMonitor:
             hist = self._module_div_hist[m]
             if len(hist) < self.config.warmup_steps:
                 continue
-            # Z-score the module history against its own warmup baseline
             warmup = hist[:self.config.warmup_steps]
-            mu = sum(warmup) / len(warmup)
+            mu  = sum(warmup) / len(warmup)
             var = sum((x - mu) ** 2 for x in warmup) / len(warmup)
-            sigma = math.sqrt(var) + self.config.eps
+            sigma  = math.sqrt(var) + self.config.eps
             z_hist = [(v - mu) / sigma for v in hist[self.config.warmup_steps:]]
             idx = _first_persistent(z_hist, Z, P)
             if idx is not None:
@@ -337,9 +306,8 @@ class BendexMonitor:
             return self.monitored[-1] if self.monitored else None
 
         earliest = min(crossings.values())
-        cluster = [m for m, c in crossings.items() if c <= earliest + lag]
+        cluster  = [m for m, c in crossings.items() if c <= earliest + lag]
 
-        # Select deepest — last in the monitored list order
         for m in reversed(self.monitored):
             if m in cluster:
                 return m
