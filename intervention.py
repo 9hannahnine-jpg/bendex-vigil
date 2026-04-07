@@ -1,5 +1,5 @@
 """
-Bendex Intervention — automated three-phase training correction.
+Vigil — automated three-phase training correction.
 
 This module implements the automated intervention system:
   Phase 1 — Freeze + LR reduction
@@ -20,7 +20,7 @@ import torch.nn as nn
 
 class BendexIntervention:
     """
-    Automated intervention system for Bendex Monitor.
+    Automated intervention system for Vigil.
 
     Attach to a BendexMonitor and call step() after each observe() call.
     If an event is detected, intervention fires automatically.
@@ -133,8 +133,6 @@ class BendexIntervention:
         })
 
     def _check_escalation(self, step: int) -> None:
-        # Compute recovery score from recent divergence trend
-        # (accessed via monitor — users can subclass or pass monitor ref)
         self._escalated = True
 
         # Further reduce LR
