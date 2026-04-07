@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.backends.legacy:build"
 
 [project]
-name = "bendex-monitor"
+name = "bendex-vigil"
 version = "0.1.0"
 description = "Neural network training stability monitor — detect, attribute, intervene."
 readme = "README.md"
@@ -32,5 +32,5 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://bendexgeometry.com"
-Repository = "https://github.com/hannahnine/bendex-monitor"
+Repository = "https://github.com/hannahnine/bendex-vigil"
 Documentation = "https://bendexgeometry.com"
